@@ -958,7 +958,7 @@ function relTime(iso) {
   if (min < 1)  return "just now";
   if (min < 60) return `${Math.round(min)}m ago`;
   const h = min / 60;
-  if (h < 48) return `${Math.round(h)}h ago`;
+  if (h < 24) return `${Math.round(h)}h ago`;
   const d = h / 24;
   if (d < 14) return `${Math.round(d)}d ago`;
   return new Date(iso).toISOString().slice(0, 10);
