@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Threat Feed — cyberdefense.blue</title>
-<meta name="description" content="Feed glissant 7 jours d'IPs malveillantes observées sur mon infra par CrowdSec + Suricata.">
+<meta name="description" content="Rolling 7-day feed of malicious IPs observed on my infrastructure by CrowdSec + Suricata.">
 <meta name="color-scheme" content="light dark">
 <!-- CSP : restreint les origines réseau autorisées. `unsafe-inline` est requis
      pour le <style> et <script> embarqués (page autonome single-file). Si une
@@ -38,8 +38,12 @@
   --tor-bg:    #ffd9e6; --tor-fg:   #99355a;
   --warn-bg:   #fff8c5; --warn-fg:  #7d4e00;
 }
+/* Palette dark : appliquée si prefers-color-scheme=dark ET aucun override
+   utilisateur, OU si l'utilisateur a explicitement choisi le mode dark via
+   le toggle (data-theme="dark"). data-theme="light" force le mode clair
+   même si le browser préfère dark. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg:        #0d1117;
     --bg-elev:   #161b22;
     --bg-row:    #0d1117;
@@ -61,6 +65,27 @@
     --warn-bg:   #4a2e0a; --warn-fg:  #fac775;
   }
 }
+:root[data-theme="dark"] {
+  --bg:        #0d1117;
+  --bg-elev:   #161b22;
+  --bg-row:    #0d1117;
+  --bg-row-h:  #161b22;
+  --bg-active: #0c2d6b;
+  --fg:        #e6edf3;
+  --fg-mute:   #9198a1;
+  --fg-dim:    #6e7681;
+  --border:    #30363d;
+  --border-s:  #21262d;
+  --accent:    #58a6ff;
+
+  --cs-bg:     #0c2d6b; --cs-fg:   #b5d4f4;
+  --su-bg:     #4a2e0a; --su-fg:   #fac775;
+  --multi-bg:  #3c3489; --multi-fg: #cecbf6;
+  --cloud-bg:  #3c3489; --cloud-fg: #cecbf6;
+  --scan-bg:   #085041; --scan-fg:  #9fe1cb;
+  --tor-bg:    #72243e; --tor-fg:   #f4c0d1;
+  --warn-bg:   #4a2e0a; --warn-fg:  #fac775;
+}
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
@@ -80,6 +105,12 @@ main {
 header {
   margin-bottom: 1.5rem;
 }
+header .header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
 header h1 {
   font-size: 22px;
   font-weight: 500;
@@ -92,6 +123,23 @@ header p {
 }
 header a { color: var(--accent); text-decoration: none; }
 header a:hover { text-decoration: underline; }
+
+.theme-toggle {
+  background: transparent;
+  border: 0.5px solid var(--border);
+  color: var(--fg);
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 16px;
+  font-family: inherit;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.theme-toggle:hover { background: var(--bg-elev); }
 
 .stats {
   display: grid;
@@ -383,8 +431,15 @@ footer a:hover { text-decoration: underline; }
 <body>
 <main>
   <header>
-    <h1>Threat feed</h1>
-    <p>IPs observées sur mon infra par <a href="https://www.crowdsec.net/" target="_blank" rel="noopener">CrowdSec</a> et <a href="https://suricata.io/" target="_blank" rel="noopener">Suricata</a> sur les 7 derniers jours. Refresh toutes les 12h. Source : <a id="repo-link" href="#" target="_blank" rel="noopener">github</a>.</p>
+    <div class="header-row">
+      <div>
+        <h1>Threat feed</h1>
+        <p>IPs observed on my infrastructure by <a href="https://www.crowdsec.net/" target="_blank" rel="noopener">CrowdSec</a> and <a href="https://suricata.io/" target="_blank" rel="noopener">Suricata</a> over the last 7 days. Refreshed every 12h. Source: <a id="repo-link" href="#" target="_blank" rel="noopener">github</a>.</p>
+      </div>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle theme">
+        <span id="theme-icon" aria-hidden="true">☾</span>
+      </button>
+    </div>
   </header>
 
   <div id="warn" class="warn-banner" hidden></div>
@@ -395,7 +450,7 @@ footer a:hover { text-decoration: underline; }
     <button class="chip active" data-scope="all">All · 0</button>
     <button class="chip" data-scope="crowdsec">CrowdSec · 0</button>
     <button class="chip" data-scope="suricata">Suricata · 0</button>
-    <input type="text" class="search" id="search" placeholder="Rechercher IP, ASN, scenario, tag…" autocomplete="off">
+    <input type="text" class="search" id="search" placeholder="Search IP, ASN, scenario, tag…" autocomplete="off">
   </div>
 
   <div id="tag-bar" class="tag-bar"></div>
@@ -413,17 +468,17 @@ footer a:hover { text-decoration: underline; }
         </tr>
       </thead>
       <tbody id="rows">
-        <tr><td colspan="6" class="loading">Chargement…</td></tr>
+        <tr><td colspan="6" class="loading">Loading…</td></tr>
       </tbody>
     </table>
   </div>
 
   <footer>
     <div>
-      <span id="generated-at">—</span> · TTL 7j
+      <span id="generated-at">—</span> · TTL 7d
     </div>
     <div class="dl-links">
-      <span>Téléchargement brut :</span>
+      <span>Raw download:</span>
       <a id="dl-txt"  href="#" download>txt</a>
       <a id="dl-json" href="#" download>json</a>
     </div>
@@ -434,7 +489,7 @@ footer a:hover { text-decoration: underline; }
 <aside class="drawer" id="drawer" aria-hidden="true">
   <div class="drawer-head">
     <h2 id="drawer-ip">—</h2>
-    <button class="drawer-close" id="drawer-close" aria-label="Fermer">×</button>
+    <button class="drawer-close" id="drawer-close" aria-label="Close">×</button>
   </div>
   <div class="drawer-body" id="drawer-body"></div>
 </aside>
@@ -467,31 +522,31 @@ function isValidIp(ip) {
 // Python ou un JSON tampered en transit.
 function validateFeedShape(data, expectedScope) {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
-    throw new Error(`feed ${expectedScope}: structure JSON invalide (objet attendu)`);
+    throw new Error(`feed ${expectedScope}: invalid JSON structure (object expected)`);
   }
   if (typeof data.generated_at !== "string" || !data.generated_at) {
-    throw new Error(`feed ${expectedScope}: champ generated_at manquant ou invalide`);
+    throw new Error(`feed ${expectedScope}: missing or invalid generated_at field`);
   }
   // Le champ `scope` a été ajouté en 3.1. Tolérant à son absence (feeds
   // historiques) mais rejette une valeur incohérente avec ce qu'on a demandé.
   if (data.scope !== undefined && data.scope !== expectedScope) {
-    throw new Error(`feed ${expectedScope}: scope déclaré "${String(data.scope).slice(0, 32)}" incohérent avec l'URL`);
+    throw new Error(`feed ${expectedScope}: declared scope "${String(data.scope).slice(0, 32)}" inconsistent with URL`);
   }
   if (!Array.isArray(data.items)) {
-    throw new Error(`feed ${expectedScope}: champ items doit être un tableau`);
+    throw new Error(`feed ${expectedScope}: items field must be an array`);
   }
   if (!data.counts || typeof data.counts !== "object" || Array.isArray(data.counts)) {
-    throw new Error(`feed ${expectedScope}: champ counts manquant ou invalide`);
+    throw new Error(`feed ${expectedScope}: missing or invalid counts field`);
   }
   for (const k of ["total", "v4", "v6"]) {
     if (typeof data.counts[k] !== "number" || data.counts[k] < 0) {
-      throw new Error(`feed ${expectedScope}: counts.${k} non numérique ou négatif`);
+      throw new Error(`feed ${expectedScope}: counts.${k} non-numeric or negative`);
     }
   }
   // Contrôle de cohérence : items.length doit correspondre grosso modo à
   // counts.total (le filtre isValidIp peut faire diverger légèrement).
   if (Math.abs(data.items.length - data.counts.total) > data.items.length * 0.5) {
-    throw new Error(`feed ${expectedScope}: incohérence items.length (${data.items.length}) vs counts.total (${data.counts.total})`);
+    throw new Error(`feed ${expectedScope}: items.length (${data.items.length}) inconsistent with counts.total (${data.counts.total})`);
   }
 }
 
@@ -522,7 +577,7 @@ async function load() {
       const before = data.items.length;
       data.items = data.items.filter(it => isValidIp(it?.ip));
       const dropped = before - data.items.length;
-      if (dropped) console.warn(`[${scope}] ${dropped} item(s) ignoré(s) — IP invalide`);
+      if (dropped) console.warn(`[${scope}] ${dropped} item(s) skipped — invalid IP`);
       state.data[scope] = data;
     });
     await Promise.all(fetches);
@@ -531,7 +586,7 @@ async function load() {
     render();
   } catch (e) {
     document.getElementById("rows").innerHTML =
-      `<tr><td colspan="6"><div class="error">Échec de chargement : ${escapeHtml(e.message)}</div></td></tr>`;
+      `<tr><td colspan="6"><div class="error">Failed to load: ${escapeHtml(e.message)}</div></td></tr>`;
   }
 }
 
@@ -542,7 +597,7 @@ function initFooterLinks() {
   const data = state.data[state.scope];
   if (data?.generated_at) {
     document.getElementById("generated-at").textContent =
-      `Généré ${relTime(data.generated_at)}`;
+      `Generated ${relTime(data.generated_at)}`;
   }
 }
 
@@ -553,7 +608,7 @@ function checkFreshness() {
   if (age > 14) {
     const w = document.getElementById("warn");
     w.hidden = false;
-    w.textContent = `Le feed n'a pas été rafraîchi depuis ${Math.round(age)}h (refresh attendu toutes les 12h).`;
+    w.textContent = `The feed has not been refreshed for ${Math.round(age)}h (expected every 12h).`;
   }
 }
 
@@ -655,9 +710,9 @@ function renderStats() {
 
   const html = `
     <div class="stat" data-disabled="1">
-      <div class="stat-label">IPs actives (rolling 7j)</div>
+      <div class="stat-label">Active IPs (rolling 7d)</div>
       <div class="stat-value">${total}</div>
-      <div class="stat-sub">refresh ${all.generated_at ? relTime(all.generated_at) : "—"}</div>
+      <div class="stat-sub">refreshed ${all.generated_at ? relTime(all.generated_at) : "—"}</div>
     </div>
     <div class="stat" data-action="cycle-scope">
       <div class="stat-label">Sources</div>
@@ -665,7 +720,7 @@ function renderStats() {
         <span class="badge crowdsec">CrowdSec ${crowdsec}</span>
         <span class="badge suricata">Suricata ${suricata}</span>
       </div>
-      <div class="stat-sub">${both > 0 ? `${both} vue${both > 1 ? "s" : ""} par les deux` : "—"}</div>
+      <div class="stat-sub">${both > 0 ? `${both} seen by both` : "—"}</div>
     </div>
     <div class="stat" data-action="filter-asn" data-asn="${escapeHtml(topAsn || "")}">
       <div class="stat-label">Top ASN</div>
@@ -720,7 +775,7 @@ function renderRows() {
   const items = filteredSorted();
   const tbody = document.getElementById("rows");
   if (!items.length) {
-    tbody.innerHTML = `<tr><td colspan="6" class="empty">Aucune IP ne correspond aux filtres.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="empty">No IPs match the current filters.</td></tr>`;
     return;
   }
   const rows = items.map(it => {
@@ -792,7 +847,7 @@ function openDrawer(ip, rowEl) {
   const tagsHtml = (it.tags || []).map(t => `<span class="badge ${tagFamily(t)}">${escapeHtml(tagShort(t))}</span>`).join(" ") || "—";
 
   let html = `<dl>
-    <dt>Famille</dt><dd>${escapeHtml(it.family || "—")}</dd>
+    <dt>Family</dt><dd>${escapeHtml(it.family || "—")}</dd>
     <dt>Sources</dt><dd>${srcHtml}</dd>
     <dt>First seen</dt><dd>${escapeHtml(it.first_seen || "—")} <span class="muted">(${relTime(it.first_seen)})</span></dd>
     <dt>Last seen</dt><dd>${escapeHtml(it.last_seen || "—")} <span class="muted">(${relTime(it.last_seen)})</span></dd>
@@ -809,19 +864,18 @@ function openDrawer(ip, rowEl) {
     html += `</ul>`;
   }
 
-  if (it.payloads?.length) {
-    html += `<h3>Payloads observés (${it.payloads.length})</h3><ul class="payloads">`;
-    for (const p of it.payloads) html += `<li>${escapeHtml(p)}</li>`;
-    html += `</ul>`;
-  }
+  // Placeholder pour la section "Observed payloads", peuplé via DOM API
+  // (textContent) après body.innerHTML = html. Permet de positionner les
+  // payloads juste après Scenarios tout en gardant le rendu blindé.
+  html += `<div id="drawer-payloads"></div>`;
 
   // Section "Actions" : copy clipboard de l'IP brute. IP re-validée au clic
   // par défense en profondeur.
   html += `<h3>Actions</h3><div>
-      <button class="copy-btn" data-action="copy-ip">Copier l'IP</button>
+      <button class="copy-btn" data-action="copy-ip">Copy IP</button>
     </div>`;
 
-  // Section "Lookup externe" : navigation vers les services tiers de threat
+  // Section "External lookup" : navigation vers les services tiers de threat
   // intel. Chaque URL est construite avec une base hardcoded + l'IP encodée
   // via encodeURIComponent. Liens affichés UNIQUEMENT si l'IP est conforme
   // à la regex stricte → pas d'open redirect possible. `noopener noreferrer`
@@ -835,7 +889,7 @@ function openDrawer(ip, rowEl) {
       { name: "Shodan",       url: `https://www.shodan.io/host/${enc}` },
       { name: "GreyNoise",    url: `https://viz.greynoise.io/ip/${enc}` },
     ];
-    html += `<h3>Lookup externe</h3><ul class="lookups">`;
+    html += `<h3>External lookup</h3><ul class="lookups">`;
     for (const s of services) {
       html += `<li><a class="lookup-link" href="${escapeHtml(s.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(s.name)}<span class="ext">↗</span></a></li>`;
     }
@@ -844,12 +898,39 @@ function openDrawer(ip, rowEl) {
 
   body.innerHTML = html;
 
+  // ---- Section "Observed payloads" — rendu via DOM API (textContent) -----
+  //
+  // Les payloads sont la donnée la plus tordue du JSON : segments d'URL,
+  // headers HTTP, parfois caractères de contrôle, parfois fragments de
+  // commandes shell capturées par les sondes. On les rend dans le placeholder
+  // `#drawer-payloads` (positionné juste après Scenarios) avec
+  // `document.createElement` + `textContent` au lieu d'innerHTML+escapeHtml.
+  //
+  // textContent ne parse JAMAIS le contenu comme du HTML. Aucune balise,
+  // aucune entité, aucun caractère ne peut être interprété par le browser
+  // comme du markup. C'est la garantie la plus forte que la spec fournit
+  // pour insérer du texte non-fiable dans un noeud DOM.
+  const payloadsContainer = body.querySelector("#drawer-payloads");
+  if (payloadsContainer && it.payloads?.length) {
+    const h3 = document.createElement("h3");
+    h3.textContent = `Observed payloads (${it.payloads.length})`;
+    payloadsContainer.appendChild(h3);
+    const ul = document.createElement("ul");
+    ul.className = "payloads";
+    for (const p of it.payloads) {
+      const li = document.createElement("li");
+      li.textContent = String(p);
+      ul.appendChild(li);
+    }
+    payloadsContainer.appendChild(ul);
+  }
+
   for (const btn of body.querySelectorAll("button.copy-btn[data-action='copy-ip']")) {
     btn.addEventListener("click", () => {
       if (!isValidIp(it.ip)) return;
       navigator.clipboard?.writeText(it.ip).then(() => {
         const original = btn.textContent;
-        btn.textContent = "Copié ✓";
+        btn.textContent = "Copied ✓";
         setTimeout(() => { btn.textContent = original; }, 1200);
       });
     });
@@ -874,12 +955,12 @@ function relTime(iso) {
   const ms = Date.now() - new Date(iso).getTime();
   if (isNaN(ms)) return "—";
   const min = ms / 60e3;
-  if (min < 1)  return "à l'instant";
-  if (min < 60) return `il y a ${Math.round(min)} min`;
+  if (min < 1)  return "just now";
+  if (min < 60) return `${Math.round(min)}m ago`;
   const h = min / 60;
-  if (h < 48) return `il y a ${Math.round(h)} h`;
+  if (h < 48) return `${Math.round(h)}h ago`;
   const d = h / 24;
-  if (d < 14) return `il y a ${Math.round(d)} j`;
+  if (d < 14) return `${Math.round(d)}d ago`;
   return new Date(iso).toISOString().slice(0, 10);
 }
 
@@ -944,6 +1025,50 @@ for (const th of document.querySelectorAll("th[data-key]")) {
 document.getElementById("backdrop").addEventListener("click", closeDrawer);
 document.getElementById("drawer-close").addEventListener("click", closeDrawer);
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
+
+// ---- Theme toggle (light / dark) -------------------------------------------
+//
+// 3 états possibles :
+// - aucun data-theme sur <html> → le browser suit `prefers-color-scheme`
+// - data-theme="dark"           → force dark (override prefers)
+// - data-theme="light"          → force light (override prefers)
+//
+// La valeur choisie est persistée dans localStorage ("theme"). Au load on
+// la restaure si elle existe.
+
+(function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem("theme"); } catch (_) {}
+  if (saved === "dark" || saved === "light") {
+    document.documentElement.dataset.theme = saved;
+  }
+  updateThemeIcon();
+})();
+
+function currentTheme() {
+  const set = document.documentElement.dataset.theme;
+  if (set === "dark" || set === "light") return set;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function updateThemeIcon() {
+  // On affiche l'icône du mode CIBLE (vers lequel on basculera au clic).
+  const icon = document.getElementById("theme-icon");
+  if (icon) icon.textContent = currentTheme() === "dark" ? "☀" : "☾";
+}
+
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("theme", next); } catch (_) {}
+  updateThemeIcon();
+});
+
+// Si l'utilisateur n'a pas fait de choix manuel, on suit les changements
+// de prefers-color-scheme (ex: bascule auto jour/nuit côté OS).
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (!document.documentElement.dataset.theme) updateThemeIcon();
+});
 
 load();
 </script>
