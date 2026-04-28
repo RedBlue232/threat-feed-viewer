@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Threat Feed — cyberdefense.blue</title>
+<meta name="description" content="Feed glissant 7 jours d'IPs malveillantes observées sur mon infra par CrowdSec + Suricata.">
+<meta name="color-scheme" content="light dark">
+<!-- CSP : restreint les origines réseau autorisées. `unsafe-inline` est requis
+     pour le <style> et <script> embarqués (page autonome single-file). Si une
+     vuln de type XSS passait inaperçue, l'attaquant ne pourrait ni charger un
+     domaine externe ni exfiltrer vers un autre host : connect-src est verrouillé
+     sur raw.githubusercontent.com.
+     Note : `frame-ancestors` n'est pas définissable via <meta> (ignoré par le
+     browser, warning attendu). La protection clickjacking est fournie côté
+     serveur par GitHub Pages qui injecte `X-Frame-Options: DENY` par défaut. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://raw.githubusercontent.com; img-src 'self' data:; font-src 'self'; form-action 'none'; base-uri 'self';">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<style>
+:root {
+  --bg:        #ffffff;
+  --bg-elev:   #f6f8fa;
+  --bg-row:    #ffffff;
+  --bg-row-h:  #f6f8fa;
+  --bg-active: #ddf4ff;
+  --fg:        #1f2328;
+  --fg-mute:   #656d76;
+  --fg-dim:    #8c959f;
+  --border:    #d0d7de;
+  --border-s:  #d8dee4;
+  --accent:    #0969da;
+
+  --cs-bg:     #ddf4ff; --cs-fg:   #0550ae;
+  --su-bg:     #fff1c5; --su-fg:   #7d4e00;
+  --multi-bg:  #e8defd; --multi-fg: #4f3a98;
+  --cloud-bg:  #e8defd; --cloud-fg: #4f3a98;
+  --scan-bg:   #d1f2e3; --scan-fg:  #0f6e56;
+  --tor-bg:    #ffd9e6; --tor-fg:   #99355a;
+  --warn-bg:   #fff8c5; --warn-fg:  #7d4e00;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:        #0d1117;
+    --bg-elev:   #161b22;
+    --bg-row:    #0d1117;
+    --bg-row-h:  #161b22;
+    --bg-active: #0c2d6b;
+    --fg:        #e6edf3;
+    --fg-mute:   #9198a1;
+    --fg-dim:    #6e7681;
+    --border:    #30363d;
+    --border-s:  #21262d;
+    --accent:    #58a6ff;
+
+    --cs-bg:     #0c2d6b; --cs-fg:   #b5d4f4;
+    --su-bg:     #4a2e0a; --su-fg:   #fac775;
+    --multi-bg:  #3c3489; --multi-fg: #cecbf6;
+    --cloud-bg:  #3c3489; --cloud-fg: #cecbf6;
+    --scan-bg:   #085041; --scan-fg:  #9fe1cb;
+    --tor-bg:    #72243e; --tor-fg:   #f4c0d1;
+    --warn-bg:   #4a2e0a; --warn-fg:  #fac775;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.5;
+  font-size: 14px;
+  min-height: 100vh;
+}
+main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+header {
+  margin-bottom: 1.5rem;
+}
+header h1 {
+  font-size: 22px;
+  font-weight: 500;
+  margin: 0 0 4px;
+}
+header p {
+  margin: 0;
+  color: var(--fg-mute);
+  font-size: 13px;
+}
+header a { color: var(--accent); text-decoration: none; }
+header a:hover { text-decoration: underline; }
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 1.25rem;
+}
+.stat {
+  background: var(--bg-elev);
+  border-radius: 8px;
+  padding: 14px 16px;
+  border: 0.5px solid var(--border-s);
+  cursor: pointer;
+  transition: background .1s;
+}
+.stat:hover { background: var(--bg-row-h); }
+.stat[data-disabled="1"] { cursor: default; }
+.stat[data-disabled="1"]:hover { background: var(--bg-elev); }
+.stat-label { font-size: 12px; color: var(--fg-mute); margin-bottom: 4px; }
+.stat-value { font-size: 22px; font-weight: 500; color: var(--fg); }
+.stat-sub { font-size: 12px; color: var(--fg-dim); margin-top: 4px; }
+.stat-badges { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.chip {
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 0.5px solid var(--border);
+  color: var(--fg-mute);
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  user-select: none;
+}
+.chip:hover { background: var(--bg-elev); }
+.chip.active {
+  background: var(--cs-bg);
+  color: var(--cs-fg);
+  border-color: transparent;
+  font-weight: 500;
+}
+.search {
+  flex: 1;
+  min-width: 200px;
+  height: 32px;
+  font-size: 13px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 0.5px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+}
+.search:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.tag-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  min-height: 22px;
+}
+.tag-active {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 0;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tag-active::after { content: "×"; font-size: 14px; line-height: 1; }
+.tag-active.cloud  { background: var(--cloud-bg); color: var(--cloud-fg); }
+.tag-active.scanner { background: var(--scan-bg); color: var(--scan-fg); }
+.tag-active.tor    { background: var(--tor-bg); color: var(--tor-fg); }
+.tag-active.asn    { background: var(--bg-elev); color: var(--fg-mute); border: 0.5px solid var(--border); }
+
+.warn-banner {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.table-wrap {
+  background: var(--bg);
+  border: 0.5px solid var(--border-s);
+  border-radius: 12px;
+  overflow: hidden;
+}
+table { width: 100%; border-collapse: collapse; }
+thead {
+  background: var(--bg-elev);
+  position: sticky; top: 0;
+}
+th {
+  text-align: left;
+  padding: 10px 12px;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--fg-mute);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  border-bottom: 0.5px solid var(--border-s);
+}
+th:hover { color: var(--fg); }
+th.sort::after { content: " ▾"; opacity: .5; }
+th.sort.asc::after { content: " ▴"; }
+th.right { text-align: right; }
+tbody tr {
+  border-top: 0.5px solid var(--border-s);
+  cursor: pointer;
+  transition: background .1s;
+}
+tbody tr:hover { background: var(--bg-row-h); }
+tbody tr.selected { background: var(--bg-active); }
+tbody td { padding: 10px 12px; font-size: 13px; vertical-align: middle; }
+tbody td.ip   { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+tbody td.right { text-align: right; }
+tbody td.muted { color: var(--fg-mute); }
+
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.badge.crowdsec { background: var(--cs-bg);    color: var(--cs-fg); }
+.badge.suricata { background: var(--su-bg);    color: var(--su-fg); }
+.badge.multi    { background: var(--multi-bg); color: var(--multi-fg); }
+.badge.cloud    { background: var(--cloud-bg); color: var(--cloud-fg); }
+.badge.scanner  { background: var(--scan-bg);  color: var(--scan-fg); }
+.badge.tor      { background: var(--tor-bg);   color: var(--tor-fg); }
+.badge-row { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.empty, .loading {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: var(--fg-mute);
+  font-size: 14px;
+}
+.error {
+  background: var(--tor-bg); color: var(--tor-fg);
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+footer {
+  margin-top: 2rem;
+  padding-top: 1.25rem;
+  border-top: 0.5px solid var(--border-s);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--fg-mute);
+}
+footer a { color: var(--accent); text-decoration: none; }
+footer a:hover { text-decoration: underline; }
+.dl-links { display: flex; gap: 12px; flex-wrap: wrap; }
+
+.drawer-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.35);
+  display: none;
+  z-index: 9;
+}
+.drawer-backdrop.open { display: block; }
+.drawer {
+  position: fixed;
+  top: 0; right: 0;
+  height: 100vh;
+  width: min(520px, 100vw);
+  background: var(--bg);
+  border-left: 0.5px solid var(--border);
+  box-shadow: -4px 0 24px rgba(0,0,0,.12);
+  transform: translateX(100%);
+  transition: transform .2s ease;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+}
+.drawer.open { transform: translateX(0); }
+.drawer-head {
+  padding: 1rem 1.25rem;
+  border-bottom: 0.5px solid var(--border-s);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.drawer-head h2 {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 18px; font-weight: 500;
+  margin: 0; word-break: break-all;
+}
+.drawer-close {
+  background: transparent;
+  border: 0.5px solid var(--border);
+  color: var(--fg-mute);
+  font-size: 14px;
+  width: 28px; height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.drawer-close:hover { background: var(--bg-elev); color: var(--fg); }
+.drawer-body { padding: 1rem 1.25rem; overflow-y: auto; flex: 1; }
+.drawer dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
+.drawer dt { color: var(--fg-mute); font-size: 12px; padding-top: 2px; }
+.drawer dd { margin: 0; font-size: 13px; word-break: break-word; }
+.drawer h3 {
+  font-size: 13px; font-weight: 500; color: var(--fg-mute);
+  margin: 1.25rem 0 8px; text-transform: uppercase; letter-spacing: .03em;
+}
+.drawer ul.scenarios { margin: 0; padding-left: 1.25rem; font-size: 13px; }
+.drawer ul.scenarios li { margin-bottom: 2px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+.drawer ul.payloads { list-style: none; margin: 0; padding: 0; }
+.drawer ul.payloads li {
+  background: var(--bg-elev);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+.copy-btn {
+  display: inline-block;
+  background: transparent;
+  border: 0.5px solid var(--border);
+  color: var(--fg-mute);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  text-decoration: none;
+  margin-left: 6px;
+}
+.copy-btn:hover { background: var(--bg-elev); color: var(--fg); }
+
+.drawer ul.lookups {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.drawer ul.lookups li { margin-bottom: 4px; }
+.lookup-link {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border: 0.5px solid var(--border);
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--fg);
+  font-size: 13px;
+  transition: background .1s;
+}
+.lookup-link:hover { background: var(--bg-elev); }
+.lookup-link .ext { color: var(--fg-mute); font-size: 11px; }
+
+@media (max-width: 700px) {
+  .stats { grid-template-columns: 1fr; }
+  th.hide-sm, td.hide-sm { display: none; }
+  main { padding: 1.25rem 0.75rem 3rem; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Threat feed</h1>
+    <p>IPs observées sur mon infra par <a href="https://www.crowdsec.net/" target="_blank" rel="noopener">CrowdSec</a> et <a href="https://suricata.io/" target="_blank" rel="noopener">Suricata</a> sur les 7 derniers jours. Refresh toutes les 12h. Source : <a id="repo-link" href="#" target="_blank" rel="noopener">github</a>.</p>
+  </header>
+
+  <div id="warn" class="warn-banner" hidden></div>
+
+  <div id="stats" class="stats"></div>
+
+  <div class="toolbar">
+    <button class="chip active" data-scope="all">All · 0</button>
+    <button class="chip" data-scope="crowdsec">CrowdSec · 0</button>
+    <button class="chip" data-scope="suricata">Suricata · 0</button>
+    <input type="text" class="search" id="search" placeholder="Rechercher IP, ASN, scenario, tag…" autocomplete="off">
+  </div>
+
+  <div id="tag-bar" class="tag-bar"></div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="sort" data-key="ip">IP</th>
+          <th class="sort desc" data-key="last_seen">Last seen</th>
+          <th data-key="sources">Sources</th>
+          <th class="hide-sm" data-key="asn">ASN</th>
+          <th class="hide-sm" data-key="tags">Tags</th>
+          <th class="right sort" data-key="scenarios_count">Scn</th>
+        </tr>
+      </thead>
+      <tbody id="rows">
+        <tr><td colspan="6" class="loading">Chargement…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer>
+    <div>
+      <span id="generated-at">—</span> · TTL 7j
+    </div>
+    <div class="dl-links">
+      <span>Téléchargement brut :</span>
+      <a id="dl-txt"  href="#" download>txt</a>
+      <a id="dl-json" href="#" download>json</a>
+    </div>
+  </footer>
+</main>
+
+<div class="drawer-backdrop" id="backdrop"></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-head">
+    <h2 id="drawer-ip">—</h2>
+    <button class="drawer-close" id="drawer-close" aria-label="Fermer">×</button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+</aside>
+
+<script>
+"use strict";
+
+const REPO   = "RedBlue232/threat-feed-publisher";
+const BRANCH = "main";
+const FEED_URL = scope =>
+  `https://raw.githubusercontent.com/${REPO}/${BRANCH}/feeds/feed-${scope}-7d.json`;
+
+document.getElementById("repo-link").href = `https://github.com/${REPO}`;
+
+const SCOPES = ["all", "crowdsec", "suricata"];
+
+// Regex IP stricte (defense in depth contre des items mal formés dans le JSON)
+const IPV4_RE = /^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
+const IPV6_RE = /^[0-9a-fA-F:]{2,45}$/;
+function isValidIp(ip) {
+  return typeof ip === "string"
+    && ip.length <= 45
+    && (IPV4_RE.test(ip) || (ip.includes(":") && IPV6_RE.test(ip)));
+}
+
+const state = {
+  data:    { all: null, crowdsec: null, suricata: null },
+  scope:   "all",
+  search:  "",
+  sortKey: "last_seen",
+  sortDir: "desc",
+  tags:    new Set(),
+  asn:     null,
+};
+
+// ---- Loading ----------------------------------------------------------------
+
+async function load() {
+  try {
+    const fetches = SCOPES.map(async scope => {
+      const r = await fetch(FEED_URL(scope), { cache: "no-store" });
+      if (!r.ok) throw new Error(`${scope}: HTTP ${r.status}`);
+      const data = await r.json();
+      // Defense in depth : on ignore tout item dont l'IP ne match pas une regex
+      // stricte. Un JSON corrompu ne pourra pas faire passer du contenu douteux
+      // dans la table ou dans le presse-papier.
+      if (Array.isArray(data?.items)) {
+        const before = data.items.length;
+        data.items = data.items.filter(it => isValidIp(it?.ip));
+        const dropped = before - data.items.length;
+        if (dropped) console.warn(`[${scope}] ${dropped} item(s) ignoré(s) — IP invalide`);
+      }
+      state.data[scope] = data;
+    });
+    await Promise.all(fetches);
+    initFooterLinks();
+    checkFreshness();
+    render();
+  } catch (e) {
+    document.getElementById("rows").innerHTML =
+      `<tr><td colspan="6"><div class="error">Échec de chargement : ${escapeHtml(e.message)}</div></td></tr>`;
+  }
+}
+
+function initFooterLinks() {
+  const base = `https://raw.githubusercontent.com/${REPO}/${BRANCH}/feeds/feed-${state.scope}-7d`;
+  document.getElementById("dl-txt").href  = `${base}.txt`;
+  document.getElementById("dl-json").href = `${base}.json`;
+  const data = state.data[state.scope];
+  if (data?.generated_at) {
+    document.getElementById("generated-at").textContent =
+      `Généré ${relTime(data.generated_at)}`;
+  }
+}
+
+function checkFreshness() {
+  const d = state.data.all;
+  if (!d?.generated_at) return;
+  const age = (Date.now() - new Date(d.generated_at).getTime()) / 3600e3;
+  if (age > 14) {
+    const w = document.getElementById("warn");
+    w.hidden = false;
+    w.textContent = `Le feed n'a pas été rafraîchi depuis ${Math.round(age)}h (refresh attendu toutes les 12h).`;
+  }
+}
+
+// ---- Filter + sort ----------------------------------------------------------
+
+function currentItems() {
+  return state.data[state.scope]?.items || [];
+}
+
+// Whitelist des sources connues. Une source non listée est rendue avec une
+// classe "neutre" (pas de couleur dédiée) plutôt que d'interpoler une chaîne
+// arbitraire dans un attribut `class` (= break-out potentiel).
+const KNOWN_SOURCES = new Set(["crowdsec", "suricata"]);
+function sourceClass(s) {
+  return KNOWN_SOURCES.has(s) ? s : "";
+}
+
+function matches(item) {
+  if (state.search) {
+    const q = state.search.toLowerCase();
+    const hay = [
+      item.ip,
+      item.asn || "",
+      item.asn_name || "",
+      ...(item.scenarios || []),
+      ...(item.tags || []),
+      ...(item.sources || []),
+    ].join(" ").toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  if (state.tags.size) {
+    const itemTags = new Set(item.tags || []);
+    for (const t of state.tags) if (!itemTags.has(t)) return false;
+  }
+  if (state.asn && item.asn !== state.asn) return false;
+  return true;
+}
+
+function sortKeyOf(item) {
+  switch (state.sortKey) {
+    case "ip":              return ipSortKey(item.ip);
+    case "last_seen":       return item.last_seen || "";
+    case "sources":         return (item.sources || []).join(",");
+    case "asn":             return item.asn_name || item.asn || "ZZZ";
+    case "tags":            return (item.tags || []).join(",");
+    case "scenarios_count": return (item.scenarios || []).length;
+    default: return "";
+  }
+}
+
+function ipSortKey(ip) {
+  if (!ip) return "";
+  if (ip.includes(":")) return "v6:" + ip;
+  return "v4:" + ip.split(".").map(p => p.padStart(3, "0")).join(".");
+}
+
+function compare(a, b) {
+  const ka = sortKeyOf(a), kb = sortKeyOf(b);
+  if (ka < kb) return state.sortDir === "asc" ? -1 :  1;
+  if (ka > kb) return state.sortDir === "asc" ?  1 : -1;
+  return 0;
+}
+
+function filteredSorted() {
+  return currentItems().filter(matches).sort(compare);
+}
+
+// ---- Render -----------------------------------------------------------------
+
+function render() {
+  renderStats();
+  renderToolbar();
+  renderTagBar();
+  renderRows();
+  initFooterLinks();
+}
+
+function renderStats() {
+  const all = state.data.all;
+  if (!all) return;
+  // Coercion stricte : si le JSON a un counts.total non-numérique, on retombe à 0
+  // plutôt que d'interpoler une string non échappée dans le HTML.
+  const total    = Number(all.counts?.total) || 0;
+  const crowdsec = Number(state.data.crowdsec?.counts?.total) || 0;
+  const suricata = Number(state.data.suricata?.counts?.total) || 0;
+  const both = crowdsec + suricata - total;
+
+  // top ASN (sur le scope `all` peu importe le filtre)
+  const asnCount = {};
+  for (const it of all.items || []) {
+    if (it.asn) asnCount[it.asn] = (asnCount[it.asn] || 0) + 1;
+  }
+  const top = Object.entries(asnCount).sort((a, b) => b[1] - a[1])[0];
+  const topAsn  = top ? top[0] : null;
+  const topCount = top ? top[1] : 0;
+  const topName = topAsn
+    ? (all.items.find(i => i.asn === topAsn)?.asn_name || `AS${topAsn}`)
+    : "—";
+
+  const html = `
+    <div class="stat" data-disabled="1">
+      <div class="stat-label">IPs actives (rolling 7j)</div>
+      <div class="stat-value">${total}</div>
+      <div class="stat-sub">refresh ${all.generated_at ? relTime(all.generated_at) : "—"}</div>
+    </div>
+    <div class="stat" data-action="cycle-scope">
+      <div class="stat-label">Sources</div>
+      <div class="stat-badges">
+        <span class="badge crowdsec">CrowdSec ${crowdsec}</span>
+        <span class="badge suricata">Suricata ${suricata}</span>
+      </div>
+      <div class="stat-sub">${both > 0 ? `${both} vue${both > 1 ? "s" : ""} par les deux` : "—"}</div>
+    </div>
+    <div class="stat" data-action="filter-asn" data-asn="${escapeHtml(topAsn || "")}">
+      <div class="stat-label">Top ASN</div>
+      <div class="stat-value" style="font-size:14px;">${escapeHtml(topName)}</div>
+      <div class="stat-sub">${topCount} IP${topCount > 1 ? "s" : ""} / ${total ? Math.round(100*topCount/total) : 0}%</div>
+    </div>`;
+  const stats = document.getElementById("stats");
+  stats.innerHTML = html;
+  stats.querySelector('[data-action="cycle-scope"]')?.addEventListener("click", () => {
+    const idx = SCOPES.indexOf(state.scope);
+    state.scope = SCOPES[(idx + 1) % SCOPES.length];
+    render();
+  });
+  stats.querySelector('[data-action="filter-asn"]')?.addEventListener("click", e => {
+    const asn = e.currentTarget.dataset.asn;
+    if (!asn) return;
+    state.asn = state.asn === asn ? null : asn;
+    render();
+  });
+}
+
+function renderToolbar() {
+  for (const btn of document.querySelectorAll(".chip[data-scope]")) {
+    const s = btn.dataset.scope;
+    const c = state.data[s]?.counts?.total || 0;
+    btn.textContent = `${s === "all" ? "All" : s[0].toUpperCase() + s.slice(1)} · ${c}`;
+    btn.classList.toggle("active", state.scope === s);
+  }
+  for (const th of document.querySelectorAll("th[data-key]")) {
+    th.classList.remove("asc", "desc");
+    if (th.dataset.key === state.sortKey) th.classList.add(state.sortDir);
+  }
+}
+
+function renderTagBar() {
+  const bar = document.getElementById("tag-bar");
+  const chips = [];
+  for (const t of [...state.tags].sort()) {
+    chips.push(`<button class="tag-active ${tagFamily(t)}" data-tag="${escapeHtml(t)}">${escapeHtml(tagShort(t))}</button>`);
+  }
+  if (state.asn) {
+    chips.push(`<button class="tag-active asn" data-clear-asn="1">AS${escapeHtml(state.asn)}</button>`);
+  }
+  bar.innerHTML = chips.join("");
+  for (const b of bar.querySelectorAll("[data-tag]")) {
+    b.addEventListener("click", () => { state.tags.delete(b.dataset.tag); render(); });
+  }
+  bar.querySelector("[data-clear-asn]")?.addEventListener("click", () => { state.asn = null; render(); });
+}
+
+function renderRows() {
+  const items = filteredSorted();
+  const tbody = document.getElementById("rows");
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty">Aucune IP ne correspond aux filtres.</td></tr>`;
+    return;
+  }
+  const rows = items.map(it => {
+    const sources = (it.sources || []).sort();
+    const srcBadge = sources.length === 0
+      ? `<span class="muted">—</span>`
+      : sources.length > 1
+        ? `<span class="badge multi">cs+suri</span>`
+        : `<span class="badge ${sourceClass(sources[0])}">${escapeHtml(sources[0])}</span>`;
+    const tagBadges = (it.tags || []).map(t =>
+      `<span class="badge ${tagFamily(t)}" data-tag="${escapeHtml(t)}">${escapeHtml(tagShort(t))}</span>`
+    ).join("");
+    const asnSafe = escapeHtml(it.asn || "");
+    const asnCell = it.asn
+      ? `<span data-asn="${asnSafe}">AS${asnSafe} ${escapeHtml(asnShort(it.asn_name || ""))}</span>`
+      : `<span class="muted">—</span>`;
+    return `<tr data-ip="${escapeHtml(it.ip)}">
+      <td class="ip">${escapeHtml(it.ip)}</td>
+      <td class="muted">${relTime(it.last_seen)}</td>
+      <td>${srcBadge}</td>
+      <td class="hide-sm">${asnCell}</td>
+      <td class="hide-sm"><div class="badge-row">${tagBadges || '<span class="muted">—</span>'}</div></td>
+      <td class="right">${(it.scenarios || []).length}</td>
+    </tr>`;
+  }).join("");
+  tbody.innerHTML = rows;
+  for (const tr of tbody.querySelectorAll("tr[data-ip]")) {
+    tr.addEventListener("click", e => {
+      // Click sur un badge tag = filtre, pas drawer
+      const tagEl = e.target.closest("[data-tag]");
+      if (tagEl) {
+        e.stopPropagation();
+        toggleTag(tagEl.dataset.tag);
+        return;
+      }
+      const asnEl = e.target.closest("[data-asn]");
+      if (asnEl) {
+        e.stopPropagation();
+        state.asn = state.asn === asnEl.dataset.asn ? null : asnEl.dataset.asn;
+        render();
+        return;
+      }
+      openDrawer(tr.dataset.ip, tr);
+    });
+  }
+}
+
+function toggleTag(tag) {
+  if (state.tags.has(tag)) state.tags.delete(tag);
+  else state.tags.add(tag);
+  render();
+}
+
+// ---- Drawer -----------------------------------------------------------------
+
+function openDrawer(ip, rowEl) {
+  for (const r of document.querySelectorAll("tr.selected")) r.classList.remove("selected");
+  rowEl?.classList.add("selected");
+
+  const it = currentItems().find(x => x.ip === ip);
+  if (!it) return;
+  document.getElementById("drawer-ip").textContent = it.ip;
+  const body = document.getElementById("drawer-body");
+
+  const sources = (it.sources || []).sort();
+  const srcHtml = sources.map(s =>
+    `<span class="badge ${sourceClass(s)}">${escapeHtml(s)}</span>`
+  ).join(" ") || "—";
+  const tagsHtml = (it.tags || []).map(t => `<span class="badge ${tagFamily(t)}">${escapeHtml(tagShort(t))}</span>`).join(" ") || "—";
+
+  let html = `<dl>
+    <dt>Famille</dt><dd>${escapeHtml(it.family || "—")}</dd>
+    <dt>Sources</dt><dd>${srcHtml}</dd>
+    <dt>First seen</dt><dd>${escapeHtml(it.first_seen || "—")} <span class="muted">(${relTime(it.first_seen)})</span></dd>
+    <dt>Last seen</dt><dd>${escapeHtml(it.last_seen || "—")} <span class="muted">(${relTime(it.last_seen)})</span></dd>
+    <dt>Tags</dt><dd>${tagsHtml}</dd>`;
+  if (it.asn) {
+    html += `<dt>ASN</dt><dd>AS${escapeHtml(it.asn)} ${escapeHtml(it.asn_name || "")}</dd>`;
+    if (it.asn_prefix) html += `<dt>Prefix</dt><dd><code>${escapeHtml(it.asn_prefix)}</code></dd>`;
+  }
+  html += `</dl>`;
+
+  if (it.scenarios?.length) {
+    html += `<h3>Scenarios (${it.scenarios.length})</h3><ul class="scenarios">`;
+    for (const sc of it.scenarios) html += `<li>${escapeHtml(sc)}</li>`;
+    html += `</ul>`;
+  }
+
+  if (it.payloads?.length) {
+    html += `<h3>Payloads observés (${it.payloads.length})</h3><ul class="payloads">`;
+    for (const p of it.payloads) html += `<li>${escapeHtml(p)}</li>`;
+    html += `</ul>`;
+  }
+
+  // Section "Actions" : copy clipboard de l'IP brute. IP re-validée au clic
+  // par défense en profondeur.
+  html += `<h3>Actions</h3><div>
+      <button class="copy-btn" data-action="copy-ip">Copier l'IP</button>
+    </div>`;
+
+  // Section "Lookup externe" : navigation vers les services tiers de threat
+  // intel. Chaque URL est construite avec une base hardcoded + l'IP encodée
+  // via encodeURIComponent. Liens affichés UNIQUEMENT si l'IP est conforme
+  // à la regex stricte → pas d'open redirect possible. `noopener noreferrer`
+  // empêche tabnabbing et fuite d'URL d'origine vers ces tiers.
+  if (isValidIp(it.ip)) {
+    const enc = encodeURIComponent(it.ip);
+    const services = [
+      { name: "CrowdSec CTI", url: `https://app.crowdsec.net/cti/${enc}` },
+      { name: "AbuseIPDB",    url: `https://www.abuseipdb.com/check/${enc}` },
+      { name: "VirusTotal",   url: `https://www.virustotal.com/gui/ip-address/${enc}` },
+      { name: "Shodan",       url: `https://www.shodan.io/host/${enc}` },
+      { name: "GreyNoise",    url: `https://viz.greynoise.io/ip/${enc}` },
+    ];
+    html += `<h3>Lookup externe</h3><ul class="lookups">`;
+    for (const s of services) {
+      html += `<li><a class="lookup-link" href="${escapeHtml(s.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(s.name)}<span class="ext">↗</span></a></li>`;
+    }
+    html += `</ul>`;
+  }
+
+  body.innerHTML = html;
+
+  for (const btn of body.querySelectorAll("button.copy-btn[data-action='copy-ip']")) {
+    btn.addEventListener("click", () => {
+      if (!isValidIp(it.ip)) return;
+      navigator.clipboard?.writeText(it.ip).then(() => {
+        const original = btn.textContent;
+        btn.textContent = "Copié ✓";
+        setTimeout(() => { btn.textContent = original; }, 1200);
+      });
+    });
+  }
+
+  document.getElementById("drawer").classList.add("open");
+  document.getElementById("backdrop").classList.add("open");
+  document.getElementById("drawer").setAttribute("aria-hidden", "false");
+}
+
+function closeDrawer() {
+  document.getElementById("drawer").classList.remove("open");
+  document.getElementById("backdrop").classList.remove("open");
+  document.getElementById("drawer").setAttribute("aria-hidden", "true");
+  for (const r of document.querySelectorAll("tr.selected")) r.classList.remove("selected");
+}
+
+// ---- Helpers ----------------------------------------------------------------
+
+function relTime(iso) {
+  if (!iso) return "—";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (isNaN(ms)) return "—";
+  const min = ms / 60e3;
+  if (min < 1)  return "à l'instant";
+  if (min < 60) return `il y a ${Math.round(min)} min`;
+  const h = min / 60;
+  if (h < 48) return `il y a ${Math.round(h)} h`;
+  const d = h / 24;
+  if (d < 14) return `il y a ${Math.round(d)} j`;
+  return new Date(iso).toISOString().slice(0, 10);
+}
+
+function tagFamily(tag) {
+  if (tag.startsWith("mwl:cloud"))   return "cloud";
+  if (tag.startsWith("mwl:scanner")) return "scanner";
+  if (tag.startsWith("tor:"))        return "tor";
+  return "";
+}
+
+function tagShort(tag) {
+  // mwl:cloud="azure" → cloud:azure ; tor:exit-node → tor:exit
+  return tag
+    .replace(/^mwl:/, "")
+    .replace(/="?/, ":")
+    .replace(/"$/, "")
+    .replace(/^tor:exit-node$/, "tor:exit");
+}
+
+function asnShort(name) {
+  // "MICROSOFT-CORP-MSN-AS-BLOCK - Microsoft Corporation" → "Microsoft"
+  if (!name) return "";
+  const dash = name.indexOf(" - ");
+  if (dash > 0) name = name.slice(dash + 3);
+  return name.split(" ")[0].slice(0, 24);
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// ---- Wiring -----------------------------------------------------------------
+
+document.getElementById("search").addEventListener("input", e => {
+  state.search = e.target.value.trim();
+  renderRows();
+});
+
+for (const btn of document.querySelectorAll(".chip[data-scope]")) {
+  btn.addEventListener("click", () => {
+    state.scope = btn.dataset.scope;
+    render();
+  });
+}
+
+for (const th of document.querySelectorAll("th[data-key]")) {
+  th.addEventListener("click", () => {
+    if (state.sortKey === th.dataset.key) {
+      state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+    } else {
+      state.sortKey = th.dataset.key;
+      state.sortDir = "asc";
+    }
+    render();
+  });
+}
+
+document.getElementById("backdrop").addEventListener("click", closeDrawer);
+document.getElementById("drawer-close").addEventListener("click", closeDrawer);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
+
+load();
+</script>
+</body>
+</html>
