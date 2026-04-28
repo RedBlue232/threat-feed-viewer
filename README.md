@@ -9,7 +9,7 @@ projet [threat-feed-publisher](https://github.com/RedBlue232/threat-feed-publish
 
 Single-file HTML/JS vanilla, zéro dépendance. Au chargement, fetch les 3 feeds JSON (`feed-{all,crowdsec,suricata}-7d.json`) directement depuis le repo source via `raw.githubusercontent.com`. Affiche table filtrable, recherche, détail par IP avec liens lookup vers CrowdSec CTI, AbuseIPDB, VirusTotal, Shodan et GreyNoise.
 
-Pour modifier le source du feed, édite `REPO` et `BRANCH` en tête du `<script>` dans `index.html`.
+UX inspirée de [beaconbeagle.com](https://beaconbeagle.com).
 
 ## Déploiement
 
