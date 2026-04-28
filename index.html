@@ -460,6 +460,41 @@ function isValidIp(ip) {
     && (IPV4_RE.test(ip) || (ip.includes(":") && IPV6_RE.test(ip)));
 }
 
+// Validation stricte du schéma top-level d'un feed JSON. Throw une erreur
+// explicite si le shape est invalide → l'utilisateur voit un message clair
+// dans la table plutôt qu'un crash silencieux ou un affichage incohérent.
+// Defense in depth contre une corruption de la pipeline de génération côté
+// Python ou un JSON tampered en transit.
+function validateFeedShape(data, expectedScope) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error(`feed ${expectedScope}: structure JSON invalide (objet attendu)`);
+  }
+  if (typeof data.generated_at !== "string" || !data.generated_at) {
+    throw new Error(`feed ${expectedScope}: champ generated_at manquant ou invalide`);
+  }
+  // Le champ `scope` a été ajouté en 3.1. Tolérant à son absence (feeds
+  // historiques) mais rejette une valeur incohérente avec ce qu'on a demandé.
+  if (data.scope !== undefined && data.scope !== expectedScope) {
+    throw new Error(`feed ${expectedScope}: scope déclaré "${String(data.scope).slice(0, 32)}" incohérent avec l'URL`);
+  }
+  if (!Array.isArray(data.items)) {
+    throw new Error(`feed ${expectedScope}: champ items doit être un tableau`);
+  }
+  if (!data.counts || typeof data.counts !== "object" || Array.isArray(data.counts)) {
+    throw new Error(`feed ${expectedScope}: champ counts manquant ou invalide`);
+  }
+  for (const k of ["total", "v4", "v6"]) {
+    if (typeof data.counts[k] !== "number" || data.counts[k] < 0) {
+      throw new Error(`feed ${expectedScope}: counts.${k} non numérique ou négatif`);
+    }
+  }
+  // Contrôle de cohérence : items.length doit correspondre grosso modo à
+  // counts.total (le filtre isValidIp peut faire diverger légèrement).
+  if (Math.abs(data.items.length - data.counts.total) > data.items.length * 0.5) {
+    throw new Error(`feed ${expectedScope}: incohérence items.length (${data.items.length}) vs counts.total (${data.counts.total})`);
+  }
+}
+
 const state = {
   data:    { all: null, crowdsec: null, suricata: null },
   scope:   "all",
@@ -478,15 +513,16 @@ async function load() {
       const r = await fetch(FEED_URL(scope), { cache: "no-store" });
       if (!r.ok) throw new Error(`${scope}: HTTP ${r.status}`);
       const data = await r.json();
-      // Defense in depth : on ignore tout item dont l'IP ne match pas une regex
-      // stricte. Un JSON corrompu ne pourra pas faire passer du contenu douteux
-      // dans la table ou dans le presse-papier.
-      if (Array.isArray(data?.items)) {
-        const before = data.items.length;
-        data.items = data.items.filter(it => isValidIp(it?.ip));
-        const dropped = before - data.items.length;
-        if (dropped) console.warn(`[${scope}] ${dropped} item(s) ignoré(s) — IP invalide`);
-      }
+      // 1. Validation stricte du shape top-level. Throw avec message explicite
+      //    si le JSON est mal formé ou tampered.
+      validateFeedShape(data, scope);
+      // 2. Defense in depth : on ignore tout item dont l'IP ne match pas une
+      //    regex stricte. Un item corrompu ne pourra pas faire passer du
+      //    contenu douteux dans la table ou dans le presse-papier.
+      const before = data.items.length;
+      data.items = data.items.filter(it => isValidIp(it?.ip));
+      const dropped = before - data.items.length;
+      if (dropped) console.warn(`[${scope}] ${dropped} item(s) ignoré(s) — IP invalide`);
       state.data[scope] = data;
     });
     await Promise.all(fetches);
